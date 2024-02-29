@@ -18,12 +18,12 @@
 
 module tb_hard_png ();
 
-initial $dumpvars(1, tb_hard_png);
+initial $dumpvars(1, tb_hard_png); // dump all signals to waveform file
 
 
 reg rstn = 1'b0;
 reg clk  = 1'b1;
-always #10000 clk = ~clk;    // 50MHz
+always #10000 clk = ~clk;    // ? 50MHz
 initial begin repeat(4) @(posedge clk); rstn<=1'b1; end
 
 
