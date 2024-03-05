@@ -36,24 +36,24 @@ reg  [13:0]  ppr = 0;   // pixel per row
 reg  [13:0]  bpr = 0;   // bytes per row
 reg  [31:0]  rpf = 0;   // rows per frame
 
-assign colortype = isplte ? 3'd4 : {1'b0,bpp};
+assign colortype = isplte ? 3'd4 : {1'b0,bpp}; // 作者重新映射了 color type // 0:gray   1:gray+A   2:RGB   3:RGBA   4:RGB-plte
 
 assign width  = ppr;
 assign height = rpf;
 
-reg          pvalid;
+reg          pvalid; // ? p is pixel?
 reg          pready;
 reg  [ 7:0]  pbyte;
 
-reg          mvalid = 0;
+reg          mvalid = 0; // ? m is memory?
 reg  [ 7:0]  mbyte = 0;
 
-reg          bvalid = 0;
+reg          bvalid = 0; // ? b is // 读 mem_plte 时，用作索引
 reg  [ 7:0]  bbyte = 0;
 
 reg          plte_wen = 0;
 reg  [ 7:0]  plte_waddr = 0;
-reg  [23:0]  plte_wdata = 0;
+reg  [23:0]  plte_wdata = 0; // ? A被固定为 0xFF
 reg  [23:0]  plte_rdata;
 
 
@@ -63,8 +63,9 @@ reg  [23:0]  plte_rdata;
 // png parser
 //-----------------------------------------------------------------------------------------------------------------------
 
-wire     ispltes [0:7]; assign ispltes[0]=1'b0; assign ispltes[1]=1'b0; assign ispltes[2]=1'b0; assign ispltes[3]=1'b1; assign ispltes[4]=1'b0; assign ispltes[5]=1'b0; assign ispltes[6]=1'b0; assign ispltes[7]=1'b0;
-wire [ 1:0] bpps [0:7]; assign bpps[0]=2'd0; assign bpps[1]=2'd0; assign bpps[2]=2'd2; assign bpps[3]=2'd0; assign bpps[4]=2'd1; assign bpps[5]=2'd0; assign bpps[6]=2'd3; assign bpps[7]=2'd0;
+// 根据 color type 映射得到 isplte 和 bpp(bytes per pixel) 的值
+wire     ispltes [0:7]; assign ispltes[0]=1'b0; assign ispltes[1]=1'b0; assign ispltes[2]=1'b0; assign ispltes[3]=1'b1; assign ispltes[4]=1'b0; assign ispltes[5]=1'b0; assign ispltes[6]=1'b0; assign ispltes[7]=1'b0; // 0b0000 1000 // 当 Colour type == 3 时，才是 Indexed-colour。
+wire [ 1:0] bpps [0:7]; assign bpps[0]=2'd0; assign bpps[1]=2'd0; assign bpps[2]=2'd2; assign bpps[3]=2'd0; assign bpps[4]=2'd1; assign bpps[5]=2'd0; assign bpps[6]=2'd3; assign bpps[7]=2'd0; // Greyscale(0) : 0; Truecolour(2) : 2; Indexed-colour(3) : 0; Greyscale with alpha(4) : 1; Truecolour with alpha(6) : 3 // 四种 color type(除了 Indexed-colour) 映射的值都比实际使用的通道数少1? 发现和作者自定义 3bit 的 colortype 值一样
 
 wire [63:0] png_precode = 64'h89504e470d0a1a0a;
 wire [31:0] ihdr_name = 32'h49484452;
@@ -72,16 +73,18 @@ wire [31:0] plte_name = 32'h504C5445;
 wire [31:0] idat_name = 32'h49444154;
 wire [31:0] iend_name = 32'h49454e44;
 
-reg  [ 7:0] latchbytes [0:6];
-wire [ 7:0] lastbytes  [0:7];
-wire [63:0] lastlbytes;
-wire [31:0] h32bit = lastlbytes[63:32];
-wire [31:0] l32bit = lastlbytes[31: 0];
+reg  [ 7:0] latchbytes [0:6]; // 锁存器? 为什么是 7 个? 每个时钟周期 lastbytes[7] 移入 ibyte，不需要存 
+wire [ 7:0] lastbytes  [0:7]; // 读入大端字节序数据，读满8字节转为小端字节序解析
+wire [63:0] lastlbytes; // 将网络字节序编码的数据转为小端字节序
+wire [31:0] h32bit = lastlbytes[63:32]; // PNG signature 是 8-bytes, chunk length/type/CRC 都是 4bytes 这里方便比较
+wire [31:0] l32bit = lastlbytes[31: 0]; // chunk type 是 4bytes 这里方便比较
 
-assign lastbytes[7] = ibyte;
+assign lastbytes[7] = ibyte; // 最新读入的字节
 
 initial {latchbytes[0],latchbytes[1],latchbytes[2],latchbytes[3],latchbytes[4],latchbytes[5],latchbytes[6]} = 0;
 
+// ? lastbytes[i] <= lastbytes[i+1] 左移，而 astbytes[7] = ibyte 最新读入的字节
+// lastbytes[0] = latchbytes[0]; latchbytes[0] = lastbytes[1]; lastbytes[1] = latchbytes[1]; latchbytes[1] = lastbytes[2]; ...; lastbytes[6] = latchbytes[6]; latchbytes[6] = lastbytes[7]
 generate genvar ii;
     for(ii=0; ii<7; ii=ii+1) begin : generate_latchbytes_connect
         assign lastbytes[ii] = latchbytes[ii];
@@ -97,7 +100,8 @@ generate genvar ii;
     end
 endgenerate
 
-assign lastlbytes[ 7: 0] = lastbytes[7];
+// PNG Spec 7.1 Integers and byte order 网络字节序 大端字节序（Big Endian）转换?
+assign lastlbytes[ 7: 0] = lastbytes[7]; // 最新读入的字节 应该是对应4字节数据中(MSB B2 B1 LSB) 的 LSB
 assign lastlbytes[15: 8] = lastbytes[6];
 assign lastlbytes[23:16] = lastbytes[5];
 assign lastlbytes[31:24] = lastbytes[4];
@@ -106,23 +110,23 @@ assign lastlbytes[47:40] = lastbytes[2];
 assign lastlbytes[55:48] = lastbytes[1];
 assign lastlbytes[63:56] = lastbytes[0];
 
-reg  [ 2:0] bcnt= 0;
-reg  [31:0] cnt = 0;
-reg  [ 2:0] crccnt = 0;
-reg  [ 2:0] gapcnt = 0;
+reg  [ 2:0] bcnt= 0; // Number of bytes read until 8 bytes are read as lastlbytes for further processing : e.g. {chunk length(4), chunk type(4)}
+reg  [31:0] cnt = 0; // init as chunk length(4). then when reading chunk data, it's the remaining bytes
+reg  [ 2:0] crccnt = 0; // chunk crc 4 bytes, skip, don't verify
+reg  [ 2:0] gapcnt = 0; // zlib header 2 bytes : compression method and flags , skip // TODO : Support parse compression method and flags
 
 localparam [2:0] NONE = 3'd0,
                  IHDR = 3'd1,
                  PLTE = 3'd2,
                  IDAT = 3'd3,
                  IEND = 3'd4;
-reg [2:0] curr_name = NONE;
+reg [2:0] curr_name = NONE; // current chunk name
 
-reg busy = 1'b0;
-reg sizevalid = 1'b0;
-
+reg busy = 1'b0; // is busy with reading chunk(除了 png signature，都是处于 busy 状态)
+reg sizevalid = 1'b0; // check if width is less than 14 bits
+// ? 为什么要 tmp 作为中间变量，而不是直接赋值给 isplte/bpp/ppr/bpr/rpf？
 reg          ispltetmp = 1'b0;
-reg  [ 1:0]  bpptmp = 0;   // bytes per pixel
+reg  [ 1:0]  bpptmp = 0;   // bytes per pixel // TODO : Support bits per pixel
 reg  [13:0]  pprtmp = 0;   // pixel per row
 reg  [15:0]  bprtmp = 0;   // bytes per row
 reg  [31:0]  rpftmp = 0;   // rows per frame
@@ -130,20 +134,20 @@ reg  [31:0]  rpftmp = 0;   // rows per frame
 reg  [ 1:0]  plte_bytecnt = 0;
 reg  [ 7:0]  plte_pixcnt  = 0;
 
-wire parametervalid =   (   lastbytes[7]==8'h0 &&
-                            lastbytes[6]==8'h0 &&
-                            lastbytes[5]==8'h0 &&
-                            lastbytes[3]==8'h8 &&
+wire parametervalid =   (   lastbytes[7]==8'h0 && // Interlace method : {0 : 非隔行扫描; 1 : Adam7} // TDOO : Support Adam7
+                            lastbytes[6]==8'h0 && // Filter method : must be 0
+                            lastbytes[5]==8'h0 && // Compression method : must be 0
+                            lastbytes[3]==8'h8 && // Bit depth // TODO : Extended to 1/2/4/16
                             (   lastbytes[4]==8'h0 ||
                                 lastbytes[4]==8'h2 ||
                                 lastbytes[4]==8'h3 ||
                                 lastbytes[4]==8'h4 ||
                                 lastbytes[4]==8'h6
-                            )
-                        );
+                            ) // Color Type
+                        ); // IHDR chunk 5 bytes(Bit depth 1 byte, Color type 1 byte, Compression method 1 byte, Filter method 1 byte, Interlace method 1 byte) is valid
 
 always @ (*)
-    if(cnt>0 && curr_name==IDAT && gapcnt==2'd0) begin
+    if(cnt>0 && curr_name==IDAT && gapcnt==2'd0) begin // 读完 `IDAT` 这4字节后，进入 压缩编码 的数据；并且跳过了 zlib 格式前2字节(compression method and flags)，正式对像素值开始解码
         iready = pready;
         pvalid = ivalid;
         pbyte  = ibyte;
@@ -210,40 +214,44 @@ always @ (posedge clk or negedge rstn)
                 bcnt <= 0;
                 cnt  <= 0;
                 crccnt <= 0;
-                busy <= (lastlbytes==png_precode);
+                busy <= (lastlbytes==png_precode); // 读完 png signature，正式读 png 码流
             end else begin
-                if(cnt>0) begin
+                if(cnt>0) begin // current chunk data remaining bytes
                     bcnt <= 0;
-                    if(curr_name==IHDR) begin
-                        cnt  <= cnt - 1;
-                        gapcnt <= 2'd2;
-                        if(cnt==6) begin
-                            rpftmp <= l32bit;
+                    if(curr_name==IHDR) begin // width(4), height(4), bit depth(1), color type(1), compression method(1), filter method(1), interlace method(1)
+                        cnt  <= cnt - 1; // non-blocking assignment. This means that the value of `cnt` is updated but the update doesn't take effect immediately. Instead, the update is scheduled to occur after the current procedural block (like an always block or an initial block) completes its execution.
+                        gapcnt <= 2'd2; // 
+                        if(cnt==6) begin // had read Height LSB 
+                            // width, height // why not 5(IHDR length is 13，读了8bytes，剩下5bytes)? The `cnt` hasn't been updated yet, because the cnt nonblocking assignment.
+                            rpftmp <= l32bit; // rows per frame <= height
                             if(h32bit[31:14] == 18'h0) begin
                                 sizevalid <= 1'b1;
-                                pprtmp <= h32bit[13:0];
-                            end else begin
+                                pprtmp <= h32bit[13:0]; // pixel per row <= width
+                            end else begin // ? width 为什么只支持 14bits？
                                 sizevalid <= 1'b0;
                                 pprtmp <= 14'h3fff;
                             end
-                        end else if(cnt==3) begin
-                            ispltetmp <= ispltes[lastlbytes[10:8]];
-                            bpptmp <= bpps[lastlbytes[10:8]];
-                        end else if(cnt==2) begin
-                            case(bpptmp)
-                            2'd0 : bprtmp <= {2'b00, pprtmp};
-                            2'd1 : bprtmp <= {1'b0, pprtmp, 1'b0};
-                            2'd2 : bprtmp <= {1'b0, pprtmp, 1'b0} + {2'b00, pprtmp};
-                            2'd3 : bprtmp <= {pprtmp, 2'b00};
+                        end else if(cnt==3) begin // had read Compression method
+                            // color type : lastlbytes[15: 8] = lastbytes[6]
+                            ispltetmp <= ispltes[lastlbytes[10:8]]; // lastlbytes[10:8] : 0/2/3/4/6，只有 ispltes[3] == 1'b1，判定为 Indexed-colour(PLTE chunk present)
+                            bpptmp <= bpps[lastlbytes[10:8]]; // bytes per pixel
+                        end else if(cnt==2) begin // had read Filter method
+                            // TODO : 修改 bpr 和 bpp 的计算方式，以支持 bit depth 为 1/2/4/16
+                            // bit depth
+                            case(bpptmp) // bytes per pixel
+                            2'd0 : bprtmp <= {2'b00, pprtmp}; // grayscale : 单通道
+                            2'd1 : bprtmp <= {1'b0, pprtmp, 1'b0}; // grayscale with alpha : 2通道. pprtmp左移1bit，实现×2
+                            2'd2 : bprtmp <= {1'b0, pprtmp, 1'b0} + {2'b00, pprtmp}; // truecolour : 3通道. pprtmp左移1bit+pprtmp，实现×3
+                            2'd3 : bprtmp <= {pprtmp, 2'b00}; // truecolour with alpha : 4通道. pprtmp左移2bit，实现×4
                             endcase
-                        end else if(cnt==1) begin
-                            if(sizevalid && parametervalid && (bprtmp[15:14]==2'd0)) begin
+                        end else if(cnt==1) begin // had read Interlace method
+                            if(sizevalid && parametervalid && (bprtmp[15:14]==2'd0)) begin // parametervalid : IHDR 除了 width 和 height 之外的参数是否合法
                                 ostart <= 1'b1;
                                 isplte <= ispltetmp;
-                                bpp <= bpptmp;
-                                ppr <= pprtmp;
-                                bpr <= bprtmp[13:0];
-                                rpf <= rpftmp;
+                                bpp <= bpptmp; // bytes per pixel // ? 比实际使用的通道数少1?
+                                ppr <= pprtmp; // pixel per row(Width)
+                                bpr <= bprtmp[13:0]; // bytes per row // ? ppr * bpp 后可能溢出吧？
+                                rpf <= rpftmp; // rows per frame(Height)
                             end else begin
                                 isplte <= 1'b0;
                                 bpp <= 0;
@@ -256,42 +264,43 @@ always @ (posedge clk or negedge rstn)
                         if(gapcnt>2'd0)
                             gapcnt <= gapcnt - 2'd1;
                         if(gapcnt==2'd0) begin
-                            if(pready)
+                            if(pready) // when pready, read next byte
                                 cnt <= cnt - 1;
                         end else begin
                             cnt <= cnt - 1;
                         end
                     end else if(curr_name==PLTE) begin
-                        plte_pixcnt <= plte_pixcnt;
-                        case(plte_bytecnt)
+                        // 将 PLTE 里的 RGB 按序写入 mem_plte
+                        plte_pixcnt <= plte_pixcnt; // ? 自赋值语句，通常用于确保信号在某些条件外的情况下仍然保持其值。
+                        case(plte_bytecnt) // 2(3) -> 0 -> 1 -> 2 
                         2'd0   :plte_bytecnt <= 2'd1;
                         2'd1   :plte_bytecnt <= 2'd2;
-                        default:begin 
+                        default:begin // 2(3) -> 0
                                 plte_bytecnt <= 2'd0;
-                                plte_pixcnt  <= plte_pixcnt + 8'd1;
+                                plte_pixcnt  <= plte_pixcnt + 8'd1; // plte_pixcnt = plte_bytecnt % 3 // 每3个字节为一个像素
                                 plte_wen     <= 1'b1;
                                 plte_waddr   <= plte_pixcnt;
                                 plte_wdata   <= lastlbytes[23:0];
                             end
                         endcase
                         cnt <= cnt - 1;
-                    end else begin
-                        cnt <= cnt - 1;
+                    end else begin // 其他字段(不包括 IEND，因为它 chunk data 一般是空的) 直接跳过
+                        cnt <= cnt - 1; // TODO : tRNS 等另外设置透明的字段考虑支持
                     end
-                end else if(crccnt>3'd0) begin
+                end else if(crccnt>3'd0) begin // skip crc 4 bytes
                     bcnt <= 0;
-                    cnt  <= 0;
-                    crccnt <= crccnt - 3'd1;
-                    if(crccnt==3'd1) begin
+                    cnt  <= 0; // crc is not counted as chunk length
+                    crccnt <= crccnt - 3'd1; // non-blocking assignment
+                    if(crccnt==3'd1) begin // had read crc last byte because non-blocking assignment
                         if(curr_name==IEND) begin
                             busy <= 1'b0;
                         end
                         curr_name <= NONE;
                     end
-                end else begin
+                end else begin // read 8 bytes : chunk length(4), chunk type(4)
                     if(bcnt==3'd7) begin
-                        cnt <= h32bit;
-                        crccnt <= 3'd4;
+                        cnt <= h32bit; // chunk length
+                        crccnt <= 3'd4; // crc length 4 bytes
                         if     (l32bit==ihdr_name)
                             curr_name <= IHDR;
                         else if(l32bit==plte_name)
@@ -314,19 +323,26 @@ always @ (posedge clk or negedge rstn)
 
 //-----------------------------------------------------------------------------------------------------------------------
 // uz_inflate
-//-----------------------------------------------------------------------------------------------------------------------
+// in an idat chunk, each scanline is a multiple of 8 bits, and in addition has one extra byte per scanline: the filter byte.
+/* 
+This function converts the filtered-padded-interlaced data into pure 2D image buffer with the PNG's colortype.
+  Steps:
+  *) if no Adam7: 1) unfilter 2) remove padding bits (= possible extra bits per scanline if bpp(bits per pixel) < 8)
+  *) TODO : if adam7: 1) 7x unfilter 2) 7x remove padding bits 3) Adam7_deinterlace
+*/
+// -----------------------------------------------------------------------------------------------------------------------
 
-reg        end_stream = 0;
+reg        end_stream = 0; // ? 为什么要用 end_stream 作为结束标志，而不是直接用 cnt==0？
 
-wire       huffman_ovalid;
-wire [7:0] huffman_obyte;
+wire       huffman_ovalid; // huffman output valid
+wire [7:0] huffman_obyte; // huffman output byte
 
-reg [ 2:0] uz_cnt = 0;
-reg [ 7:0] rbyte = 0;
+reg [ 2:0] uz_cnt = 0; // unzlib count // ? rbyte 中 bit 索引
+reg [ 7:0] rbyte = 0; // read byte
 
-reg        tvalid;
+reg        tvalid; // ? t is temp? 未解码的数据吧?
 wire       tready;
-reg        tbit;
+reg        tbit; // tbit = rbyte[uz_cnt];
 
 always @ (posedge clk or negedge rstn)
     if(~rstn) begin
@@ -365,7 +381,7 @@ always @ (posedge clk or negedge rstn)
             if(uz_cnt==3'h0) begin
                 if(pvalid & tready) begin
                     uz_cnt <= uz_cnt + 3'h1;
-                    rbyte <= pbyte;
+                    rbyte <= pbyte; // read byte from input stream // pbyte  = ibyte;
                 end
             end else begin
                 if(tready)
@@ -378,11 +394,11 @@ always @ (posedge clk or negedge rstn)
 //--------------------------------------------------------------------------------------------------------------------
 // huffman inflate
 //--------------------------------------------------------------------------------------------------------------------
-wire [ 4:0] CLCL [0:18]; assign CLCL[0]=5'd16; assign CLCL[1]=5'd17; assign CLCL[2]=5'd18; assign CLCL[3]=5'd0; assign CLCL[4]=5'd8; assign CLCL[5]=5'd7; assign CLCL[6]=5'd9; assign CLCL[7]=5'd6; assign CLCL[8]=5'd10; assign CLCL[9]=5'd5; assign CLCL[10]=5'd11; assign CLCL[11]=5'd4; assign CLCL[12]=5'd12; assign CLCL[13]=5'd3; assign CLCL[14]=5'd13; assign CLCL[15]=5'd2; assign CLCL[16]=5'd14; assign CLCL[17]=5'd1; assign CLCL[18]=5'd15;
-wire [ 8:0] LENGTH_BASE [0:29]; assign LENGTH_BASE[0]=9'd0; assign LENGTH_BASE[1]=9'd3; assign LENGTH_BASE[2]=9'd4; assign LENGTH_BASE[3]=9'd5; assign LENGTH_BASE[4]=9'd6; assign LENGTH_BASE[5]=9'd7; assign LENGTH_BASE[6]=9'd8; assign LENGTH_BASE[7]=9'd9; assign LENGTH_BASE[8]=9'd10; assign LENGTH_BASE[9]=9'd11; assign LENGTH_BASE[10]=9'd13; assign LENGTH_BASE[11]=9'd15; assign LENGTH_BASE[12]=9'd17; assign LENGTH_BASE[13]=9'd19; assign LENGTH_BASE[14]=9'd23; assign LENGTH_BASE[15]=9'd27; assign LENGTH_BASE[16]=9'd31; assign LENGTH_BASE[17]=9'd35; assign LENGTH_BASE[18]=9'd43; assign LENGTH_BASE[19]=9'd51; assign LENGTH_BASE[20]=9'd59; assign LENGTH_BASE[21]=9'd67; assign LENGTH_BASE[22]=9'd83; assign LENGTH_BASE[23]=9'd99; assign LENGTH_BASE[24]=9'd115; assign LENGTH_BASE[25]=9'd131; assign LENGTH_BASE[26]=9'd163; assign LENGTH_BASE[27]=9'd195; assign LENGTH_BASE[28]=9'd227; assign LENGTH_BASE[29]=9'd258;
-wire [ 2:0] LENGTH_EXTRA [0:29]; assign LENGTH_EXTRA[0]=3'd0; assign LENGTH_EXTRA[1]=3'd0; assign LENGTH_EXTRA[2]=3'd0; assign LENGTH_EXTRA[3]=3'd0; assign LENGTH_EXTRA[4]=3'd0; assign LENGTH_EXTRA[5]=3'd0; assign LENGTH_EXTRA[6]=3'd0; assign LENGTH_EXTRA[7]=3'd0; assign LENGTH_EXTRA[8]=3'd0; assign LENGTH_EXTRA[9]=3'd1; assign LENGTH_EXTRA[10]=3'd1; assign LENGTH_EXTRA[11]=3'd1; assign LENGTH_EXTRA[12]=3'd1; assign LENGTH_EXTRA[13]=3'd2; assign LENGTH_EXTRA[14]=3'd2; assign LENGTH_EXTRA[15]=3'd2; assign LENGTH_EXTRA[16]=3'd2; assign LENGTH_EXTRA[17]=3'd3; assign LENGTH_EXTRA[18]=3'd3; assign LENGTH_EXTRA[19]=3'd3; assign LENGTH_EXTRA[20]=3'd3; assign LENGTH_EXTRA[21]=3'd4; assign LENGTH_EXTRA[22]=3'd4; assign LENGTH_EXTRA[23]=3'd4; assign LENGTH_EXTRA[24]=3'd4; assign LENGTH_EXTRA[25]=3'd5; assign LENGTH_EXTRA[26]=3'd5; assign LENGTH_EXTRA[27]=3'd5; assign LENGTH_EXTRA[28]=3'd5; assign LENGTH_EXTRA[29]=3'd0;
-wire [14:0] DISTANCE_BASE [0:29]; assign DISTANCE_BASE[0]=15'd1; assign DISTANCE_BASE[1]=15'd2; assign DISTANCE_BASE[2]=15'd3; assign DISTANCE_BASE[3]=15'd4; assign DISTANCE_BASE[4]=15'd5; assign DISTANCE_BASE[5]=15'd7; assign DISTANCE_BASE[6]=15'd9; assign DISTANCE_BASE[7]=15'd13; assign DISTANCE_BASE[8]=15'd17; assign DISTANCE_BASE[9]=15'd25; assign DISTANCE_BASE[10]=15'd33; assign DISTANCE_BASE[11]=15'd49; assign DISTANCE_BASE[12]=15'd65; assign DISTANCE_BASE[13]=15'd97; assign DISTANCE_BASE[14]=15'd129; assign DISTANCE_BASE[15]=15'd193; assign DISTANCE_BASE[16]=15'd257; assign DISTANCE_BASE[17]=15'd385; assign DISTANCE_BASE[18]=15'd513; assign DISTANCE_BASE[19]=15'd769; assign DISTANCE_BASE[20]=15'd1025; assign DISTANCE_BASE[21]=15'd1537; assign DISTANCE_BASE[22]=15'd2049; assign DISTANCE_BASE[23]=15'd3073; assign DISTANCE_BASE[24]=15'd4097; assign DISTANCE_BASE[25]=15'd6145; assign DISTANCE_BASE[26]=15'd8193; assign DISTANCE_BASE[27]=15'd12289; assign DISTANCE_BASE[28]=15'd16385; assign DISTANCE_BASE[29]=15'd24577;
-wire [ 3:0] DISTANCE_EXTRA [0:29]; assign DISTANCE_EXTRA[0]=4'd0; assign DISTANCE_EXTRA[1]=4'd0; assign DISTANCE_EXTRA[2]=4'd0; assign DISTANCE_EXTRA[3]=4'd0; assign DISTANCE_EXTRA[4]=4'd1; assign DISTANCE_EXTRA[5]=4'd1; assign DISTANCE_EXTRA[6]=4'd2; assign DISTANCE_EXTRA[7]=4'd2; assign DISTANCE_EXTRA[8]=4'd3; assign DISTANCE_EXTRA[9]=4'd3; assign DISTANCE_EXTRA[10]=4'd4; assign DISTANCE_EXTRA[11]=4'd4; assign DISTANCE_EXTRA[12]=4'd5; assign DISTANCE_EXTRA[13]=4'd5; assign DISTANCE_EXTRA[14]=4'd6; assign DISTANCE_EXTRA[15]=4'd6; assign DISTANCE_EXTRA[16]=4'd7; assign DISTANCE_EXTRA[17]=4'd7; assign DISTANCE_EXTRA[18]=4'd8; assign DISTANCE_EXTRA[19]=4'd8; assign DISTANCE_EXTRA[20]=4'd9; assign DISTANCE_EXTRA[21]=4'd9; assign DISTANCE_EXTRA[22]=4'd10; assign DISTANCE_EXTRA[23]=4'd10; assign DISTANCE_EXTRA[24]=4'd11; assign DISTANCE_EXTRA[25]=4'd11; assign DISTANCE_EXTRA[26]=4'd12; assign DISTANCE_EXTRA[27]=4'd12; assign DISTANCE_EXTRA[28]=4'd13; assign DISTANCE_EXTRA[29]=4'd13;
+wire [ 4:0] CLCL [0:18]; assign CLCL[0]=5'd16; assign CLCL[1]=5'd17; assign CLCL[2]=5'd18; assign CLCL[3]=5'd0; assign CLCL[4]=5'd8; assign CLCL[5]=5'd7; assign CLCL[6]=5'd9; assign CLCL[7]=5'd6; assign CLCL[8]=5'd10; assign CLCL[9]=5'd5; assign CLCL[10]=5'd11; assign CLCL[11]=5'd4; assign CLCL[12]=5'd12; assign CLCL[13]=5'd3; assign CLCL[14]=5'd13; assign CLCL[15]=5'd2; assign CLCL[16]=5'd14; assign CLCL[17]=5'd1; assign CLCL[18]=5'd15; // code length code lengths
+wire [ 8:0] LENGTH_BASE [0:29]; assign LENGTH_BASE[0]=9'd0; assign LENGTH_BASE[1]=9'd3; assign LENGTH_BASE[2]=9'd4; assign LENGTH_BASE[3]=9'd5; assign LENGTH_BASE[4]=9'd6; assign LENGTH_BASE[5]=9'd7; assign LENGTH_BASE[6]=9'd8; assign LENGTH_BASE[7]=9'd9; assign LENGTH_BASE[8]=9'd10; assign LENGTH_BASE[9]=9'd11; assign LENGTH_BASE[10]=9'd13; assign LENGTH_BASE[11]=9'd15; assign LENGTH_BASE[12]=9'd17; assign LENGTH_BASE[13]=9'd19; assign LENGTH_BASE[14]=9'd23; assign LENGTH_BASE[15]=9'd27; assign LENGTH_BASE[16]=9'd31; assign LENGTH_BASE[17]=9'd35; assign LENGTH_BASE[18]=9'd43; assign LENGTH_BASE[19]=9'd51; assign LENGTH_BASE[20]=9'd59; assign LENGTH_BASE[21]=9'd67; assign LENGTH_BASE[22]=9'd83; assign LENGTH_BASE[23]=9'd99; assign LENGTH_BASE[24]=9'd115; assign LENGTH_BASE[25]=9'd131; assign LENGTH_BASE[26]=9'd163; assign LENGTH_BASE[27]=9'd195; assign LENGTH_BASE[28]=9'd227; assign LENGTH_BASE[29]=9'd258; // length base (index needs to add 256)
+wire [ 2:0] LENGTH_EXTRA [0:29]; assign LENGTH_EXTRA[0]=3'd0; assign LENGTH_EXTRA[1]=3'd0; assign LENGTH_EXTRA[2]=3'd0; assign LENGTH_EXTRA[3]=3'd0; assign LENGTH_EXTRA[4]=3'd0; assign LENGTH_EXTRA[5]=3'd0; assign LENGTH_EXTRA[6]=3'd0; assign LENGTH_EXTRA[7]=3'd0; assign LENGTH_EXTRA[8]=3'd0; assign LENGTH_EXTRA[9]=3'd1; assign LENGTH_EXTRA[10]=3'd1; assign LENGTH_EXTRA[11]=3'd1; assign LENGTH_EXTRA[12]=3'd1; assign LENGTH_EXTRA[13]=3'd2; assign LENGTH_EXTRA[14]=3'd2; assign LENGTH_EXTRA[15]=3'd2; assign LENGTH_EXTRA[16]=3'd2; assign LENGTH_EXTRA[17]=3'd3; assign LENGTH_EXTRA[18]=3'd3; assign LENGTH_EXTRA[19]=3'd3; assign LENGTH_EXTRA[20]=3'd3; assign LENGTH_EXTRA[21]=3'd4; assign LENGTH_EXTRA[22]=3'd4; assign LENGTH_EXTRA[23]=3'd4; assign LENGTH_EXTRA[24]=3'd4; assign LENGTH_EXTRA[25]=3'd5; assign LENGTH_EXTRA[26]=3'd5; assign LENGTH_EXTRA[27]=3'd5; assign LENGTH_EXTRA[28]=3'd5; assign LENGTH_EXTRA[29]=3'd0; // length extra bits (index needs to add 256)
+wire [14:0] DISTANCE_BASE [0:29]; assign DISTANCE_BASE[0]=15'd1; assign DISTANCE_BASE[1]=15'd2; assign DISTANCE_BASE[2]=15'd3; assign DISTANCE_BASE[3]=15'd4; assign DISTANCE_BASE[4]=15'd5; assign DISTANCE_BASE[5]=15'd7; assign DISTANCE_BASE[6]=15'd9; assign DISTANCE_BASE[7]=15'd13; assign DISTANCE_BASE[8]=15'd17; assign DISTANCE_BASE[9]=15'd25; assign DISTANCE_BASE[10]=15'd33; assign DISTANCE_BASE[11]=15'd49; assign DISTANCE_BASE[12]=15'd65; assign DISTANCE_BASE[13]=15'd97; assign DISTANCE_BASE[14]=15'd129; assign DISTANCE_BASE[15]=15'd193; assign DISTANCE_BASE[16]=15'd257; assign DISTANCE_BASE[17]=15'd385; assign DISTANCE_BASE[18]=15'd513; assign DISTANCE_BASE[19]=15'd769; assign DISTANCE_BASE[20]=15'd1025; assign DISTANCE_BASE[21]=15'd1537; assign DISTANCE_BASE[22]=15'd2049; assign DISTANCE_BASE[23]=15'd3073; assign DISTANCE_BASE[24]=15'd4097; assign DISTANCE_BASE[25]=15'd6145; assign DISTANCE_BASE[26]=15'd8193; assign DISTANCE_BASE[27]=15'd12289; assign DISTANCE_BASE[28]=15'd16385; assign DISTANCE_BASE[29]=15'd24577; // distance base
+wire [ 3:0] DISTANCE_EXTRA [0:29]; assign DISTANCE_EXTRA[0]=4'd0; assign DISTANCE_EXTRA[1]=4'd0; assign DISTANCE_EXTRA[2]=4'd0; assign DISTANCE_EXTRA[3]=4'd0; assign DISTANCE_EXTRA[4]=4'd1; assign DISTANCE_EXTRA[5]=4'd1; assign DISTANCE_EXTRA[6]=4'd2; assign DISTANCE_EXTRA[7]=4'd2; assign DISTANCE_EXTRA[8]=4'd3; assign DISTANCE_EXTRA[9]=4'd3; assign DISTANCE_EXTRA[10]=4'd4; assign DISTANCE_EXTRA[11]=4'd4; assign DISTANCE_EXTRA[12]=4'd5; assign DISTANCE_EXTRA[13]=4'd5; assign DISTANCE_EXTRA[14]=4'd6; assign DISTANCE_EXTRA[15]=4'd6; assign DISTANCE_EXTRA[16]=4'd7; assign DISTANCE_EXTRA[17]=4'd7; assign DISTANCE_EXTRA[18]=4'd8; assign DISTANCE_EXTRA[19]=4'd8; assign DISTANCE_EXTRA[20]=4'd9; assign DISTANCE_EXTRA[21]=4'd9; assign DISTANCE_EXTRA[22]=4'd10; assign DISTANCE_EXTRA[23]=4'd10; assign DISTANCE_EXTRA[24]=4'd11; assign DISTANCE_EXTRA[25]=4'd11; assign DISTANCE_EXTRA[26]=4'd12; assign DISTANCE_EXTRA[27]=4'd12; assign DISTANCE_EXTRA[28]=4'd13; assign DISTANCE_EXTRA[29]=4'd13; // distance extra bits
 
 reg        irepeat = 1'b0;
 reg        srepeat = 1'b0;
@@ -1190,7 +1206,7 @@ always @ (posedge clk or negedge rstn)
 //-------------------------------------------------------------------------------------------------------------
 // PLTE mem
 //-------------------------------------------------------------------------------------------------------------
-reg [23:0] mem_plte [0:255];
+reg [23:0] mem_plte [0:255]; // index <= 2^(bit depth) - 1
 
 always @ (posedge clk)
     if(plte_wen)
